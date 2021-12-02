@@ -77,10 +77,11 @@ void updateControl(){
   // stop playing if play-button is released
   int currentPlay = digitalRead(playButtonPin);
 
-  /*if(currentPlay == LOW){
+
+  if(currentPlay == LOW){
     stopMozzi();
     isPlaying = false;
-  }*/
+  }
 
 
 
