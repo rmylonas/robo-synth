@@ -1,5 +1,5 @@
 #define SCALE_LEN 8
-#define SEQ_NUM 2
+#define SEQ_NUM 32
 #define SEQ_LEN 8
 
 #include <MozziGuts.h>
@@ -11,6 +11,12 @@
 #include <Smooth.h>
 
 const int playButtonPin = 2;
+const int speedKnobPin = 2;
+const int sequenceKnobPin = 3;
+const int noteKnobPin = 0;
+const int offsetKnobPin = 1;
+const int fmSwitchPin = 4;
+const int tonalitySwitchPin = 7;
 
 //#define CONTROL_RATE 256 // Hz, powers of 2 are most reliable
 
@@ -44,8 +50,8 @@ for (int i=0; i < SEQ_NUM; i++) {
   }
 }
   
-  noteDelay.set(768); 
-  //startMozzi();
+  //noteDelay.set(768); 
+  startMozzi();
 }
 
 
@@ -58,40 +64,64 @@ char midiNote;
  Q16n16 deviation;
  Q8n8 mod_index;
  Q7n8 smoothed_note;
- Q8n8 mod_to_carrier_ratio = float_to_Q8n8(0.5);
+ Q8n8 mod_to_carrier_ratio = float_to_Q8n8(2.0);
 
   Smooth <int> kSmoothNote(0.95f);
 
-  boolean isPlaying = false;
+  boolean fmOn;
+
+  boolean isPlaying = true;
 
 void updateControl(){
 
+  // stop playing if play-button is released
   int currentPlay = digitalRead(playButtonPin);
 
-  if(currentPlay == LOW){
+  /*if(currentPlay == LOW){
     stopMozzi();
     isPlaying = false;
-  }
+  }*/
+
+
+
+//  String out_str = String(speed) + ", " + sequence + ", " + noteShift + ", " + oscOffset;
+//  Serial.println(out_str);
   
   if(noteDelay.ready()){
 
+  // read digital switches
+  fmOn = digitalRead(fmSwitchPin);
+  boolean tonality = digitalRead(tonalitySwitchPin);
+  
+  // read analog knobs
+  int speed = mozziAnalogRead(speedKnobPin);
+  int sequence = map(mozziAnalogRead(sequenceKnobPin), 0, 1023, 0, 31);
+  int noteShift = map(mozziAnalogRead(noteKnobPin), 0, 1023, -40, 5);
+  int oscOffset = map(mozziAnalogRead(offsetKnobPin), 0, 1023, -12, 12);
+    
+
       // choose envelope levels
-      byte attack_level = 127;
-      byte decay_level = 127;
+      byte attack_level = 200; //127
+      byte decay_level = 200;
       envelope.setADLevels(attack_level,decay_level);
 
     attack = 20;
     decay = 0;
     sustain = 0;
-    release_ms = 200;
+    release_ms = speed + 1;
     
      envelope.setTimes(attack,decay,sustain,release_ms);
      envelope.noteOn();
 
-     myNote = seqMatrix[1][currNote];
-     midiNote = myNote ? (cMinor[myNote] - 1) : 10;
+     myNote = seqMatrix[sequence][currNote];
 
-    setFreqs(midiNote, 1);
+     if(tonality){
+      midiNote = myNote ? (cMinor[myNote] - 1) : 10;
+     }else{
+      midiNote = myNote ? (cMajor[myNote] - 1) : 10;
+     }
+
+    setFreqs((midiNote - noteShift), oscOffset);
     //setFMFreqs(midiNote, 9);
 
      currNote = (currNote >= SCALE_LEN-1) ? 0 : currNote + 1;
@@ -101,11 +131,18 @@ void updateControl(){
 }
 
 
-void setFreqs(Q8n8 midi_note, char offset){
-     aOscil.setFreq((int)mtof(midiNote));
-     bOscil.setFreq((int)mtof(midiNote + offset));
+void setFreqs(int midi_note, int offset){    
+     aOscil.setFreq((int)mtof(midi_note));
+     bOscil.setFreq((int)mtof(midi_note + offset));
 }
 
+
+void setFmFreqs(int midi_note, int offset){    
+     aOscil.setFreq((int)mtof(midi_note));
+     bOscil.setFreq((int)mtof(midi_note * offset));
+}
+
+/*
 void setFMFreqs(Q8n8 midi_note, char offset){
     // vary the modulation index
     mod_index = (Q8n8)350+kModIndex.next();
@@ -120,17 +157,24 @@ void setFMFreqs(Q8n8 midi_note, char offset){
      aOscil.setFreq_Q16n16(carrier_freq);
      bOscil.setFreq_Q16n16(mod_freq);
 }
-
+*/
 
 int updateAudio(){
    envelope.update();  
    unsigned char nEnv = envelope.next();
 
-  Q15n16 modulation = deviation * bOscil.next() >> 8;
-  //return ((long) nEnv * aOscil.phMod(modulation)) >> 8;
-  //return ((long) nEnv * aOscil.phMod(modulation)) >> 8;
+  //Q15n16 modulation = deviation * bOscil.next() >> 8;
+  if(fmOn){
+    //Serial.println(bOscil.next());
+    return ((long) nEnv * aOscil.phMod(1.10)) >> 8;
+    //return ((long) nEnv * aOscil.phMod(bOscil.next())) >> 8;
+  }else{
+    return ((long)nEnv * aOscil.next() + (int)nEnv * bOscil.next())>>8;
+  }
+  // return ((long) nEnv * aOscil.phMod(modulation)) >> 8;
    
-  return ((long)nEnv * aOscil.next() + (int)nEnv * bOscil.next())>>8; 
+ //return ((long)nEnv * aOscil.next()) >>8; 
+  // return ((long)nEnv * aOscil.next() + (int)nEnv * bOscil.next())>>8; 
 }
 
 
@@ -138,6 +182,7 @@ void loop(){
 
   if(! isPlaying){
     int currentPlay = digitalRead(playButtonPin);
+    
     if(currentPlay == HIGH){
       startMozzi();
       isPlaying = true;
